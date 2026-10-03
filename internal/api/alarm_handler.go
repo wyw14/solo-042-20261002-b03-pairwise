@@ -1,11 +1,13 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/wyw14/cry-98/internal/alarm"
 	"github.com/wyw14/cry-98/internal/model"
 )
 
@@ -37,18 +39,31 @@ func (s *Server) raiseAlarm(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusCreated, alarmValue)
 }
 
+func writeAlarmCommandError(writer http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, alarm.ErrAlarmNotFound):
+		writeError(writer, http.StatusNotFound, err.Error())
+	case errors.Is(err, alarm.ErrInvalidTransition):
+		writeError(writer, http.StatusConflict, err.Error())
+	default:
+		// Includes journal/persistence failures: the state change was not
+		// durably recorded, so never report success for it.
+		writeError(writer, http.StatusInternalServerError, err.Error())
+	}
+}
+
 func (s *Server) acknowledgeAlarm(writer http.ResponseWriter, request *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(request, "id"))
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, "invalid alarm id")
 		return
 	}
-	alarm, err := s.deps.Alarms.Acknowledge(id)
+	alarmValue, err := s.deps.Alarms.Acknowledge(id)
 	if err != nil {
-		writeError(writer, http.StatusNotFound, err.Error())
+		writeAlarmCommandError(writer, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, alarm)
+	writeJSON(writer, http.StatusOK, alarmValue)
 }
 
 func (s *Server) clearAlarm(writer http.ResponseWriter, request *http.Request) {
@@ -59,7 +74,7 @@ func (s *Server) clearAlarm(writer http.ResponseWriter, request *http.Request) {
 	}
 	alarmValue, err := s.deps.Alarms.Clear(id)
 	if err != nil {
-		writeError(writer, http.StatusNotFound, err.Error())
+		writeAlarmCommandError(writer, err)
 		return
 	}
 	writeJSON(writer, http.StatusOK, alarmValue)

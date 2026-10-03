@@ -186,7 +186,7 @@ func buildRuntime(cfg config, now func() time.Time) (*runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	alarmService := alarm.NewService(delivery, now)
+	alarmService := alarm.NewService(delivery, store, now)
 	if err := alarm.NewRecovery(store, alarmService).Restore(); err != nil {
 		return nil, err
 	}

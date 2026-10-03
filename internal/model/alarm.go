@@ -67,6 +67,27 @@ func NewAlarm(vesselID string, kind AlarmKind, message string, now time.Time) (A
 	}, nil
 }
 
+// CanTransition reports whether moving from the current state to next is a
+// legal lifecycle change. It returns true when the states are equal so that
+// duplicate (idempotent) retries of the same command are accepted.
+//
+// Commands are only accepted from post-delivery states: the delivery journal
+// record is then guaranteed to exist, which keeps replay order aligned with
+// lifecycle order.
+func (a Alarm) CanTransition(next AlarmState) bool {
+	if a.State == next {
+		return true
+	}
+	switch a.State {
+	case AlarmPartial, AlarmDelivered:
+		return next == AlarmAcknowledged || next == AlarmCleared
+	case AlarmAcknowledged:
+		return next == AlarmCleared
+	default:
+		return false
+	}
+}
+
 func (a Alarm) WithChannels(results []ChannelResult, now time.Time) Alarm {
 	a.Channels = append([]ChannelResult(nil), results...)
 	a.State = AlarmDelivered
