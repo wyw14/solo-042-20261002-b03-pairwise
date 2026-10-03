@@ -5,8 +5,13 @@ import (
 	"errors"
 	"time"
 
-	"github.com/wyw14/cry-98/internal/journal"
 	"github.com/wyw14/cry-98/internal/model"
+)
+
+const (
+	eventPartition    = "alarms"
+	eventKindDelivery = "alarm.delivery"
+	eventKindState    = "alarm.state"
 )
 
 type Dispatcher interface {
@@ -17,14 +22,20 @@ type RetryScheduler interface {
 	Schedule(model.Alarm)
 }
 
+// EventAppender is the write side of the alarm journal. Implementations must
+// durably persist the event before returning.
+type EventAppender interface {
+	Append(model.Event) (model.Event, error)
+}
+
 type DeliveryService struct {
 	dispatcher Dispatcher
 	retries    RetryScheduler
-	journal    *journal.Store
+	journal    EventAppender
 	now        func() time.Time
 }
 
-func NewDeliveryService(dispatcher Dispatcher, retries RetryScheduler, store *journal.Store, now func() time.Time) (*DeliveryService, error) {
+func NewDeliveryService(dispatcher Dispatcher, retries RetryScheduler, store EventAppender, now func() time.Time) (*DeliveryService, error) {
 	if dispatcher == nil || retries == nil || store == nil {
 		return nil, errors.New("alarm delivery dependencies are required")
 	}
@@ -38,7 +49,7 @@ func (s *DeliveryService) Deliver(ctx context.Context, alarm model.Alarm) (model
 	alarm.State = model.AlarmDispatching
 	results, dispatchErr := s.dispatcher.Dispatch(ctx, alarm)
 	alarm = alarm.WithChannels(results, s.now())
-	event, err := model.NewEvent("alarms", "alarm.delivery", alarm.ID.String(), alarm, s.now())
+	event, err := model.NewEvent(eventPartition, eventKindDelivery, alarm.ID.String(), alarm, s.now())
 	if err != nil {
 		return model.Alarm{}, err
 	}

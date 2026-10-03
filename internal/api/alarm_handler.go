@@ -1,11 +1,13 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/wyw14/cry-98/internal/alarm"
 	"github.com/wyw14/cry-98/internal/model"
 )
 
@@ -31,6 +33,10 @@ func (s *Server) raiseAlarm(writer http.ResponseWriter, request *http.Request) {
 	}
 	alarmValue, err := s.deps.Alarms.Raise(request.Context(), input.VesselID, input.Kind, input.Message)
 	if err != nil && alarmValue.ID == uuid.Nil {
+		if errors.Is(err, alarm.ErrAlarmPersistence) {
+			writeError(writer, http.StatusInternalServerError, err.Error())
+			return
+		}
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -43,12 +49,12 @@ func (s *Server) acknowledgeAlarm(writer http.ResponseWriter, request *http.Requ
 		writeError(writer, http.StatusBadRequest, "invalid alarm id")
 		return
 	}
-	alarm, err := s.deps.Alarms.Acknowledge(id)
+	alarmValue, err := s.deps.Alarms.Acknowledge(id)
 	if err != nil {
-		writeError(writer, http.StatusNotFound, err.Error())
+		writeAlarmStateError(writer, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, alarm)
+	writeJSON(writer, http.StatusOK, alarmValue)
 }
 
 func (s *Server) clearAlarm(writer http.ResponseWriter, request *http.Request) {
@@ -59,10 +65,23 @@ func (s *Server) clearAlarm(writer http.ResponseWriter, request *http.Request) {
 	}
 	alarmValue, err := s.deps.Alarms.Clear(id)
 	if err != nil {
-		writeError(writer, http.StatusNotFound, err.Error())
+		writeAlarmStateError(writer, err)
 		return
 	}
 	writeJSON(writer, http.StatusOK, alarmValue)
+}
+
+// writeAlarmStateError maps transition failures to status codes. A state
+// change that could not be journaled is a server error — never a success.
+func writeAlarmStateError(writer http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, alarm.ErrAlarmNotFound):
+		writeError(writer, http.StatusNotFound, err.Error())
+	case errors.Is(err, alarm.ErrAlarmStateConflict):
+		writeError(writer, http.StatusConflict, err.Error())
+	default:
+		writeError(writer, http.StatusInternalServerError, err.Error())
+	}
 }
 
 func (s *Server) suppressAlarm(writer http.ResponseWriter, request *http.Request) {
